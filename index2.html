@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Voice-Controlled Document Scanner</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: #0b0c10;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            color: #c5c6c7;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        h1 {
+            color: #66fcf1;
+            margin: 0 0 5px 0;
+            font-size: 2rem;
+            text-shadow: 0 0 15px rgba(102, 252, 241, 0.3);
+        }
+
+        #subtitle {
+            color: #858688;
+            margin-bottom: 25px;
+            font-size: 1rem;
+        }
+
+        #scannerContainer {
+            display: flex;
+            gap: 25px;
+            flex-wrap: wrap;
+            justify-content: center;
+            width: 100%;
+            max-width: 1000px;
+        }
+
+        .box {
+            background: #1f2833;
+            padding: 15px;
+            border-radius: 14px;
+            border: 2px solid #45a29e;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            flex: 1;
+            min-width: 320px;
+            max-width: 440px;
+        }
+
+        .box h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: #66fcf1;
+            font-size: 1.1rem;
+        }
+
+        .view-frame {
+            width: 100%;
+            height: 320px;
+            background: #0b0c10;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #45a29e;
+            position: relative;
+        }
+
+        video, canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        #statusBar {
+            margin-top: 25px;
+            padding: 12px 30px;
+            border-radius: 30px;
+            background: #1f2833;
+            border: 2px solid #66fcf1;
+            color: #66fcf1;
+            font-weight: bold;
+            font-size: 1.1rem;
+            min-width: 300px;
+            text-align: center;
+            box-shadow: 0 0 15px rgba(102, 252, 241, 0.2);
+        }
+
+        #transcriptLog {
+            margin-top: 8px;
+            color: #858688;
+            font-style: italic;
+            font-size: 0.95rem;
+        }
+
+        .dictionary {
+            margin-top: 30px;
+            background: rgba(31, 40, 51, 0.4);
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 600px;
+            border: 1px dashed #45a29e;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .dictionary ul {
+            margin: 10px 0 0 0;
+            padding-left: 20px;
+            line-height: 1.7;
+        }
+
+        .dictionary b {
+            color: #66fcf1;
+            background: rgba(102, 252, 241, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🎙️ AI Voice Hands-Free PDF Scanner</h1>
+    <div id="subtitle">Control your scanner completely by speaking commands out loud</div>
+
+    <div id="scannerContainer">
+        <div class="box">
+            <h3>📹 Live Camera View</h3>
+            <div class="view-frame">
+                <video id="cameraFeed" autoplay playsinline></video>
+            </div>
+        </div>
+
+        <div class="box">
+            <h3>📄 Processed Document Scan Look</h3>
+            <div class="view-frame">
+                <canvas id="scanOutput"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div id="statusBar">🎙️ Setting up systems...</div>
+    <div id="transcriptLog">Waiting for mic access...</div>
+
+    <div class="dictionary">
+        <strong>🗣️ Voice Commands Dictionary (Speak clearly):</strong>
+        <ul>
+            <li>Say <b>"Scan"</b> or <b>"Capture"</b> — Snaps a picture of your page.</li>
+            <li>Say <b>"Filter"</b> or <b>"Enhance"</b> — Converts the picture into a bright, clean, high-contrast document look.</li>
+            <li>Say <b>"Save"</b> or <b>"Download"</b> — Packages all pages together and exports your PDF file.</li>
+            <li>Say <b>"Clear"</b> or <b>"Reset"</b> — Wipes all captured pages to start over.</li>
+        </ul>
+    </div>
+
+    <script>
+        const cameraFeed = document.getElementById('cameraFeed');
+        const scanOutput = document.getElementById('scanOutput');
+        const ctx = scanOutput.getContext('2d');
+        const statusBar = document.getElementById('statusBar');
+        const transcriptLog = document.getElementById('transcriptLog');
+
+        let rawPages = [];
+        let enhancedPages = [];
+
+        // 1. Initialize Camera
+        navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, facingMode: "environment" } })
+            .then(stream => {
+                cameraFeed.srcObject = stream;
+                statusBar.innerText = "🎤 Mic Listening... Status: Ready to Scan";
+            })
+            .catch(err => {
+                statusBar.innerText = "⚠️ Camera blocked or unavailable!";
+                statusBar.style.borderColor = "#ff4d4d";
+                statusBar.style.color = "#ff4d4d";
+                console.error(err);
+            });
+
+        // 2. Initialize Web Speech AI Engine
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        
+        if (!SpeechRecognition) {
+            statusBar.innerText = "❌ Browser incompatible! Use Google Chrome.";
+            statusBar.style.borderColor = "#ff4d4d";
+        } else {
+            const voiceEngine = new SpeechRecognition();
+            voiceEngine.continuous = true;
+            voiceEngine.lang = 'en-US';
+            voiceEngine.interimResults = false;
+
+            voiceEngine.start();
+
+            voiceEngine.onresult = function(event) {
+                const speechIndex = event.resultIndex;
+                const heardWords = event.results[speechIndex][0].transcript.toLowerCase().trim();
+                
+                transcriptLog.innerText = `System processed: "${heardWords}"`;
+
+                // MATCH VOICE COMMANDS
+                if (heardWords.includes("scan") || heardWords.includes("capture")) {
+                    executeCapture();
+                } 
+                else if (heardWords.includes("filter") || heardWords.includes("enhance")) {
+                    applyScannerFilter();
+                }
+                else if (heardWords.includes("save") || heardWords.includes("download")) {
+                    compileAndDownloadPDF();
+                }
+                else if (heardWords.includes("clear") || heardWords.includes("reset")) {
+                    rawPages = [];
+                    enhancedPages = [];
+                    ctx.clearRect(0, 0, scanOutput.width, scanOutput.height);
+                    statusBar.innerText = "🔄 Cleared everything. Ready!";
+                }
+            };
+
+            // Restart voice engine silently if it drops out
+            voiceEngine.onend = function() {
+                voiceEngine.start();
+            };
+        }
+
+        // Action 1: Capture View Frame
+        function executeCapture() {
+            scanOutput.width = cameraFeed.videoWidth || 640;
+            scanOutput.height = cameraFeed.videoHeight || 480;
+            
+            // Draw raw camera snapshot to canvas
+            ctx.drawImage(cameraFeed, 0, 0, scanOutput.width, scanOutput.height);
+            
+            // Save snapshot
+            const dataURI = scanOutput.toDataURL('image/jpeg', 1.0);
+            rawPages.push(dataURI);
+            enhancedPages.push(dataURI); // fallback if they don't apply filter
+
+            statusBar.innerText = `📸 Page ${rawPages.length} Snapped! Say "Filter" or "Scan" next.`;
+            statusBar.style.color = "#00ff00";
+        }
+
+        // Action 2: Intelligent Document Filter (Enhances background contrast to look like real scanners)
+        function applyScannerFilter() {
+            if (rawPages.length === 0) {
+                statusBar.innerText = "⚠️ Capture a page first before filtering!";
+                return;
+            }
+
+            statusBar.innerText = "⚡ Enhancing text clarity...";
+            
+            let imgData = ctx.getImageData(0, 0, scanOutput.width, scanOutput.height);
+            let pixels = imgData.data;
+
+            // Simple high-contrast calculation to whiten gray backgrounds and darken ink
+            for (let i = 0; i < pixels.length; i += 4) {
+                let r = pixels[i];
+                let g = pixels[i+1];
+                let b = pixels[i+2];
+                
+                // Calculate luminosity gray value
+                let v = (0.2126 * r + 0.7152 * g + 0.0722 * b);
+                
+                // Stretch values out to remove shadow noise
+                let threshold = 120; 
+                let finalVal = v > threshold ? 255 : v * 0.6; 
+
+                pixels[i] = finalVal;     // R
+                pixels[i+1] = finalVal;   // G
+                pixels[i+2] = finalVal;   // B
+            }
+            
+            ctx.putImageData(imgData, 0, 0);
+            
+            // Update the last page array position with the clean filtered version
+            enhancedPages[enhancedPages.length - 1] = scanOutput.toDataURL('image/jpeg', 1.0);
+            statusBar.innerText = "✨ Magic Filter applied! Say 'Save' to finish.";
+            statusBar.style.color = "#66fcf1";
+        }
+
+        // Action 3: Multi-page PDF compiler
+        function compileAndDownloadPDF() {
+            if (enhancedPages.length === 0) {
+                statusBar.innerText = "❌ Zero pages found to save!";
+                return;
+            }
+
+            statusBar.innerText = "⏳ Compiling document into PDF structure...";
+            
+            const { jsPDF } = window.jspdf;
+            // Create a matching landscape/portrait orientation array file layout
+            const pdf = new jsPDF(scanOutput.width > scanOutput.height ? 'l' : 'p', 'px', [scanOutput.width, scanOutput.height]);
+
+            enhancedPages.forEach((pageData, index) => {
+                if (index > 0) {
+                    pdf.addPage([scanOutput.width, scanOutput.height], scanOutput.width > scanOutput.height ? 'l' : 'p');
+                }
+                pdf.addImage(pageData, 'JPEG', 0, 0, scanOutput.width, scanOutput.height);
+            });
+
+            pdf.save("Voice_Scanned_Doc.pdf");
+            statusBar.innerText = "🎉 PDF successfully downloaded to device!";
+            statusBar.style.color = "#00ff00";
+        }
+    </script>
+</body>
+</html>
